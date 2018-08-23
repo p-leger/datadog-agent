@@ -18,7 +18,9 @@ import (
 
 	"github.com/DataDog/datadog-agent/pkg/aggregator/mocksender"
 	core "github.com/DataDog/datadog-agent/pkg/collector/corechecks"
+	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/metrics"
+	"github.com/DataDog/datadog-agent/pkg/util/kubernetes/clustername"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -206,6 +208,34 @@ func TestProcessBundledEvents(t *testing.T) {
 	kubeASCheck.processEvents(mocked, modifiedKubeEventsBundle, true)
 
 	mocked.AssertEvent(t, modifiedNewDatadogEvents, 0)
+	mocked.AssertExpectations(t)
+
+	// Test the hostname change when a cluster name is set
+	var testClusterName = "Laika"
+	config.Datadog.Set("cluster_name", testClusterName)
+	clustername.ResetClusterName() // reset state as clustername was already read
+	// defer a reset of the state so that future hostname fetches are not impacted
+	defer config.Datadog.Set("cluster_name", nil)
+	defer clustername.ResetClusterName()
+
+	modifiedNewDatadogEventsWithClusterName := metrics.Event{
+		Title:          "Events from the machine-blue Node",
+		Text:           "%%% \n30 **MissingClusterDNS**: MountVolume.SetUp succeeded\n \n _Events emitted by the kubelet seen at " + time.Unix(709675200, 0).String() + "_ \n\n %%%",
+		Priority:       "normal",
+		Tags:           []string{"test", "namespace:default", "source_component:kubelet"},
+		AggregationKey: "kubernetes_apiserver:e63e74fa-f566-11e7-9749-0e4863e1cbf4",
+		SourceTypeName: "kubernetes",
+		Ts:             709675200,
+		Host:           "machine-blue-" + testClusterName,
+		EventType:      "kubernetes_apiserver",
+	}
+
+	mocked = mocksender.NewMockSender(kubeASCheck.ID())
+	mocked.On("Event", mock.AnythingOfType("metrics.Event"))
+
+	kubeASCheck.processEvents(mocked, modifiedKubeEventsBundle, true)
+
+	mocked.AssertEvent(t, modifiedNewDatadogEventsWithClusterName, 0)
 	mocked.AssertExpectations(t)
 }
 
